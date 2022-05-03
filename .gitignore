@@ -128,3 +128,5 @@ dmypy.json
 # Pyre type checker
 .pyre/
 /.vs
+/Final project/Stereo_conveyor_without_occlusions
+/Final project/Stereo_conveyor_with_occlusions
