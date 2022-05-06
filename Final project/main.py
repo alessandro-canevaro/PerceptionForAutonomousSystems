@@ -80,8 +80,8 @@ def kalmanInit(init_state):
     kalman.measurementNoiseCov = 1e-2 * np.eye(3, dtype=np.float32)
     kalman.errorCovPost = 1. * np.eye(6, dtype=np.float32)
     kalman.measurementMatrix = np.array([[1, 0, 0, 0, 0, 0],
-                                            [0, 0, 1, 0, 0, 0],
-                                            [0, 0, 0, 0, 1, 0]], np.float32)
+                                         [0, 0, 1, 0, 0, 0],
+                                         [0, 0, 0, 0, 1, 0]], np.float32)
     kalman.statePre = init_state
     return kalman
 
@@ -94,7 +94,6 @@ def getMeasure(rect_left, rect_right, backSub):
         else:
             return True, center_x, center_y, center_z, radius, disp
     return False, 0, 0, 0, 0, 0
-
 
 frame = cv2.imread(leftImages[0])
 frame = cv2.remap(frame, rect_map_left_x, rect_map_left_y, cv2.INTER_LINEAR)
@@ -131,8 +130,6 @@ for i, (imgL, imgR) in enumerate(zip(leftImages[start:end], rightImages[start:en
         mp_3d_homogeneous = cv2.triangulatePoints(mtx_P_l, mtx_P_r, np.array([[center_x], [center_y]]), np.array([[center_x-disp], [center_y]]))
         mp_3d = cv2.transpose(mp_3d_homogeneous)
         mp_3d = cv2.convertPointsFromHomogeneous(mp_3d).squeeze()
-        #mp_3d = np.multiply(mp_3d, 1000)
-        #print(mp_3d)
 
         if center_x > 1090 and not initialized:
             #"""
