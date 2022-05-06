@@ -3,6 +3,9 @@ import numpy as np
 import glob
 import matplotlib.pyplot as plt
 
+START, END = 100, 500
+SAVE = False
+
 leftImages = glob.glob('./Stereo_conveyor_without_occlusions/left/*.png')
 rightImages = glob.glob('./Stereo_conveyor_without_occlusions/right/*.png')
 
@@ -17,7 +20,8 @@ mtx_P_r = np.load(r'matrix_calib_rectify\projection_matrix_right.npy')
 def findobjectbounds(frame, bgs):
     # Convert BGR to HSV
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    belt_mask = cv2.bitwise_not(cv2.inRange(hsv, np.array([100,50,50]), np.array([115,255,255])))
+    belt_mask = cv2.bitwise_not(cv2.inRange(hsv, np.array([100,50,50]), 
+                                                 np.array([115,255,255])))
 
     result = cv2.bitwise_and(frame, frame, mask=belt_mask)
 
@@ -29,7 +33,10 @@ def findobjectbounds(frame, bgs):
 
     contours, _ = cv2.findContours(fgMask,2,1)         
 
-    pts = np.array([[410, 490],[1110,310],[1250,370],[460,660]], np.int32)
+    pts = np.array([[410, 490],
+                    [1110,310],
+                    [1250,370],
+                    [460,660]], np.int32)
     pts = pts.reshape((-1,1,2))
 
     for c in reversed(sorted(contours, key=cv2.contourArea)):
@@ -40,7 +47,7 @@ def findobjectbounds(frame, bgs):
         break
     return False, 0, 0, 0
     
-def computeDepth(x_center, y_center, left, right, focal_lenght=685, baseline=120, gap=5): #left and right undistoreted and rectified images (3 channels)
+def computeDisparity(x_center, y_center, left, right, gap=5): #left and right undistoreted and rectified images (3 channels)
     stereo = cv2.StereoSGBM_create(minDisparity=0,
                                    numDisparities=int((1280 / 8) + 15) & -16,#160
                                    blockSize=5,
@@ -58,15 +65,16 @@ def computeDepth(x_center, y_center, left, right, focal_lenght=685, baseline=120
     disp = stereo.compute(left, right)
     disp = cv2.medianBlur(disp, 5)
 
-    depth_list = [0]#if depth is not found zero is returned
+    disp_list = [0]#if depth is not found zero is returned
     for x in [x_center-gap, x_center, x_center+gap]:
         for y in [gap*2-gap, gap*2, gap*2+gap]:
-            depth_list.append(focal_lenght*baseline/(disp[y,x]/16.0)) #in mm
+            disp_list.append((disp[y,x]))
 
-    result = max(depth_list)
-    if result > 1200 or disp[y,x] < 0:
-        return 0, 0
-    return result, disp[y,x]
+    result = max(disp_list)
+    print(result)
+    #if result:
+    #    return 0, 0
+    return result
 
 def kalmanInit(init_state):
     kalman = cv2.KalmanFilter(6, 3, 0)
@@ -88,12 +96,12 @@ def kalmanInit(init_state):
 def getMeasure(rect_left, rect_right, backSub):
     founded, center_x, center_y, radius = findobjectbounds(frame, backSub)
     if founded:
-        center_z, disp = computeDepth(int(center_x), int(center_y), rect_left, rect_right)
-        if center_z == 0:
-            return False, 0, 0, 0, 0, 0
+        disp = computeDisparity(int(center_x), int(center_y), rect_left, rect_right)
+        if disp == 0:
+            return False, 0, 0, 0, 0
         else:
-            return True, center_x, center_y, center_z, radius, disp
-    return False, 0, 0, 0, 0, 0
+            return True, center_x, center_y, radius, disp
+    return False, 0, 0, 0, 0
 
 frame = cv2.imread(leftImages[0])
 frame = cv2.remap(frame, rect_map_left_x, rect_map_left_y, cv2.INTER_LINEAR)
@@ -104,10 +112,8 @@ _ = backSub.apply(frame)
 measure_history = []
 prediction_history = []
 initialized, kalman = False, False
-start, end = 100, 500
-save = False
 
-for i, (imgL, imgR) in enumerate(zip(leftImages[start:end], rightImages[start:end])):
+for i, (imgL, imgR) in enumerate(zip(leftImages[START:END], rightImages[START:END])):
     frame = cv2.imread(imgL)
     frame = cv2.remap(frame, rect_map_left_x, rect_map_left_y, cv2.INTER_LINEAR)
     rect_left = frame.copy()
@@ -115,9 +121,9 @@ for i, (imgL, imgR) in enumerate(zip(leftImages[start:end], rightImages[start:en
     frame_right = cv2.imread(imgR)
     rect_right = cv2.remap(frame_right, rect_map_right_x, rect_map_right_y, cv2.INTER_LINEAR)
 
-    founded, center_x, center_y, center_z, radius, disp = getMeasure(rect_left, rect_right, backSub) 
+    founded, center_x, center_y, radius, disp = getMeasure(rect_left, rect_right, backSub) 
 
-    if save and founded and i%10==0:
+    if SAVE and founded and i%10==0:
         roi = frame[int(center_y-radius):int(center_y+radius), 
                     int(center_x-radius):int(center_x+radius)]
         resized_roi = cv2.resize(roi, (100, 100), interpolation= cv2.INTER_LINEAR)
@@ -127,17 +133,17 @@ for i, (imgL, imgR) in enumerate(zip(leftImages[start:end], rightImages[start:en
         cv2.circle(frame, (int(center_x), int(center_y)), int(radius), (0, 0, 255), 2) #cirle
         cv2.circle(frame, (int(center_x), int(center_y)), 5, (0, 0, 255), -1) #center
 
-        mp_3d_homogeneous = cv2.triangulatePoints(mtx_P_l, mtx_P_r, np.array([[center_x], [center_y]]), np.array([[center_x-disp], [center_y]]))
-        mp_3d = cv2.transpose(mp_3d_homogeneous)
-        mp_3d = cv2.convertPointsFromHomogeneous(mp_3d).squeeze()
+        center_3d_homogeneous = cv2.triangulatePoints(mtx_P_l, mtx_P_r, np.array([[center_x], [center_y]]), np.array([[center_x-disp], [center_y]]))
+        center_3d = cv2.transpose(center_3d_homogeneous)
+        center_3d = cv2.convertPointsFromHomogeneous(center_3d).squeeze()
 
         if center_x > 1090 and not initialized:
             #"""
-            kalman = kalmanInit(np.array([[mp_3d[0]], 
+            kalman = kalmanInit(np.array([[center_3d[0]], 
                                           [0], 
-                                          [mp_3d[1]], 
+                                          [center_3d[1]], 
                                           [0], 
-                                          [mp_3d[2]], 
+                                          [center_3d[2]], 
                                           [0]], np.float32))
 
             initialized = True
@@ -147,9 +153,9 @@ for i, (imgL, imgR) in enumerate(zip(leftImages[start:end], rightImages[start:en
             initialized = False
 
         if initialized:
-            kalman.correct(np.array([[mp_3d[0]],
-                                     [mp_3d[1]],
-                                     [mp_3d[2]]], dtype=np.float32))
+            kalman.correct(np.array([[center_3d[0]],
+                                     [center_3d[1]],
+                                     [center_3d[2]]], dtype=np.float32))
 
     if kalman:
         ### Predict the next state
@@ -169,7 +175,7 @@ for i, (imgL, imgR) in enumerate(zip(leftImages[start:end], rightImages[start:en
         prediction_history.append((0, 0, 0))
     
     if founded:
-        measure_history.append((mp_3d[0]*1000, mp_3d[1]*1000, mp_3d[2]*1000))
+        measure_history.append((center_3d[0]*1000, center_3d[1]*1000, center_3d[2]*1000))
     else:
         measure_history.append((0, 0, 0))
 
@@ -189,8 +195,7 @@ z_meas = [i[2] for i in measure_history]
 x_pred = [i[0] for i in prediction_history]
 y_pred = [i[1] for i in prediction_history]
 z_pred = [i[2] for i in prediction_history]
-#plt.scatter(x_meas, y_meas)
-#plt.scatter(x_pred, y_pred)
+
 plt.plot(x_meas)
 plt.plot(x_pred)
 plt.figure()
