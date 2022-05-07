@@ -3,7 +3,7 @@ import numpy as np
 import glob
 import matplotlib.pyplot as plt
 
-START, END = 100, 500
+START, END = 100, 300
 SAVE = False
 
 leftImages = glob.glob('./Stereo_conveyor_without_occlusions/left/*.png')
@@ -24,7 +24,6 @@ def findobjectbounds(frame, bgs):
                                                  np.array([115,255,255])))
 
     result = cv2.bitwise_and(frame, frame, mask=belt_mask)
-
     fgMask = bgs.apply(result)
 
     kernel = np.ones((5,5), np.uint8) 
@@ -71,7 +70,6 @@ def computeDisparity(x_center, y_center, left, right, gap=5): #left and right un
             disp_list.append((disp[y,x]))
 
     result = max(disp_list)
-    print(result)
     #if result:
     #    return 0, 0
     return result
