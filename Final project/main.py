@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import glob
 import matplotlib.pyplot as plt
+from tensorflow.keras import models
 
 START, END = 100, 300
 SAVE = False
@@ -16,6 +17,8 @@ rect_map_right_y = np.load(r'matrix_calib_rectify\map_right_y.npy')
 mtx_P_l = np.load(r'matrix_calib_rectify\projection_matrix_left.npy')
 mtx_P_r = np.load(r'matrix_calib_rectify\projection_matrix_right.npy')
 
+cnn = models.load_model(r".\model_data")
+#print(cnn.summary())
 
 def findobjectbounds(frame, bgs):
     # Convert BGR to HSV
@@ -125,9 +128,19 @@ for i, (imgL, imgR) in enumerate(zip(leftImages[START:END], rightImages[START:EN
         roi = frame[int(center_y-radius):int(center_y+radius), 
                     int(center_x-radius):int(center_x+radius)]
         resized_roi = cv2.resize(roi, (100, 100), interpolation= cv2.INTER_LINEAR)
+
         cv2.imwrite(r".\saved_roi\frame_{}.png".format(i), resized_roi)
 
     if founded:
+        roi = frame[int(center_y-radius):int(center_y+radius), 
+                    int(center_x-radius):int(center_x+radius)]
+        resized_roi = cv2.resize(roi, (100, 100), interpolation= cv2.INTER_LINEAR)
+        resized_roi_gray = cv2.cvtColor(resized_roi, cv2.COLOR_BGR2GRAY)
+        resized_roi_gray = resized_roi_gray.reshape((1, 100, 100, 1))
+        class_index = np.argmax(cnn.predict(resized_roi_gray)[0])
+        class_name = {0: "Book", 1: "Cardboard box", 2: "Cup"}[class_index]
+        cv2.putText(frame, "Object type: {}".format(class_name), (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, 2)
+
         cv2.circle(frame, (int(center_x), int(center_y)), int(radius), (0, 0, 255), 2) #cirle
         cv2.circle(frame, (int(center_x), int(center_y)), 5, (0, 0, 255), -1) #center
 
@@ -145,7 +158,7 @@ for i, (imgL, imgR) in enumerate(zip(leftImages[START:END], rightImages[START:EN
                                           [0]], np.float32))
 
             initialized = True
-            cv2.putText(frame,'Filter initialized', (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, 2)
+            
 
         if center_x < 600 and initialized:
             initialized = False
