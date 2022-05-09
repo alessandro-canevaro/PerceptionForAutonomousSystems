@@ -2,9 +2,9 @@ import cv2
 import numpy as np
 import glob
 import matplotlib.pyplot as plt
-from tensorflow.keras import models
+from tensorflow.keras import models, layers
 
-START, END = 100, 300
+START, END = 100, -1
 SAVE = False
 
 leftImages = glob.glob('./Stereo_conveyor_without_occlusions/left/*.png')
@@ -17,8 +17,28 @@ rect_map_right_y = np.load(r'matrix_calib_rectify\map_right_y.npy')
 mtx_P_l = np.load(r'matrix_calib_rectify\projection_matrix_left.npy')
 mtx_P_r = np.load(r'matrix_calib_rectify\projection_matrix_right.npy')
 
-cnn = models.load_model(r".\model_data")
-#print(cnn.summary())
+
+def create_model():
+    cnn_model = models.Sequential([
+    
+    layers.Conv2D(filters = 32, kernel_size = (3, 3), activation = "relu", input_shape = (100, 100, 1)),
+    layers.MaxPooling2D((2,2)),
+    
+    layers.Conv2D(filters = 64, kernel_size = (3,3), activation = "relu"),
+    layers.MaxPooling2D((2,2)),
+    
+    layers.Flatten(),
+    layers.Dense(64, activation = "relu"),
+    layers.Dropout(0.25),
+    layers.Dense(32, activation = "relu"),
+    layers.Dense(3, activation = "softmax")    
+    ])
+    cnn_model.compile(optimizer = "adam", 
+             loss = "sparse_categorical_crossentropy", 
+            #Maybe do binary_crossentropy? if it's greyscale... 
+             metrics = ["accuracy"])
+    return cnn_model
+
 
 def findobjectbounds(frame, bgs):
     # Convert BGR to HSV
@@ -104,6 +124,9 @@ def getMeasure(rect_left, rect_right, backSub):
             return True, center_x, center_y, radius, disp
     return False, 0, 0, 0, 0
 
+cnn = create_model()
+cnn.load_weights('./savedmodel/model')
+
 frame = cv2.imread(leftImages[0])
 frame = cv2.remap(frame, rect_map_left_x, rect_map_left_y, cv2.INTER_LINEAR)
 
@@ -137,8 +160,8 @@ for i, (imgL, imgR) in enumerate(zip(leftImages[START:END], rightImages[START:EN
         resized_roi = cv2.resize(roi, (100, 100), interpolation= cv2.INTER_LINEAR)
         resized_roi_gray = cv2.cvtColor(resized_roi, cv2.COLOR_BGR2GRAY)
         resized_roi_gray = resized_roi_gray.reshape((1, 100, 100, 1))
-        class_index = np.argmax(cnn.predict(resized_roi_gray)[0])
-        class_name = {0: "Book", 1: "Cardboard box", 2: "Cup"}[class_index]
+        prediction = cnn.predict(resized_roi_gray)[0]
+        class_name = {0: "Book", 1: "Cardboard box", 2: "Cup"}[np.argmax(prediction)]
         cv2.putText(frame, "Object type: {}".format(class_name), (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, 2)
 
         cv2.circle(frame, (int(center_x), int(center_y)), int(radius), (0, 0, 255), 2) #cirle
