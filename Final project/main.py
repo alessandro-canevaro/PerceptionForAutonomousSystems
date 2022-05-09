@@ -4,12 +4,14 @@ import glob
 import matplotlib.pyplot as plt
 from tensorflow.keras import models, layers
 
-START, END = 100, -1
-SAVE = False
+START, END = 0, -1 #frame indeces
+SAVE = False #save roi of objects
 
+#load pictures
 leftImages = glob.glob('./Stereo_conveyor_without_occlusions/left/*.png')
 rightImages = glob.glob('./Stereo_conveyor_without_occlusions/right/*.png')
 
+#load calibration and rectifications parameters
 rect_map_left_x = np.load(r'matrix_calib_rectify\map_left_x.npy')
 rect_map_left_y = np.load(r'matrix_calib_rectify\map_left_y.npy')
 rect_map_right_x = np.load(r'matrix_calib_rectify\map_right_x.npy')
@@ -19,6 +21,7 @@ mtx_P_r = np.load(r'matrix_calib_rectify\projection_matrix_right.npy')
 
 
 def create_model():
+    """create cnn for classification"""
     cnn_model = models.Sequential([
     
     layers.Conv2D(filters = 32, kernel_size = (3, 3), activation = "relu", input_shape = (100, 100, 1)),
@@ -38,7 +41,6 @@ def create_model():
             #Maybe do binary_crossentropy? if it's greyscale... 
              metrics = ["accuracy"])
     return cnn_model
-
 
 def findobjectbounds(frame, bgs):
     # Convert BGR to HSV
@@ -124,19 +126,24 @@ def getMeasure(rect_left, rect_right, backSub):
             return True, center_x, center_y, radius, disp
     return False, 0, 0, 0, 0
 
+#load weights of cnn
 cnn = create_model()
 cnn.load_weights('./savedmodel/model')
 
+#load first frame
 frame = cv2.imread(leftImages[0])
 frame = cv2.remap(frame, rect_map_left_x, rect_map_left_y, cv2.INTER_LINEAR)
 
+#initialize background subtractor
 backSub = cv2.createBackgroundSubtractorMOG2(30, 16, False)
 _ = backSub.apply(frame)
 
+#initialize lists and variables
 measure_history = []
 prediction_history = []
 initialized, kalman = False, False
 
+#main loop
 for i, (imgL, imgR) in enumerate(zip(leftImages[START:END], rightImages[START:END])):
     frame = cv2.imread(imgL)
     frame = cv2.remap(frame, rect_map_left_x, rect_map_left_y, cv2.INTER_LINEAR)
@@ -145,6 +152,7 @@ for i, (imgL, imgR) in enumerate(zip(leftImages[START:END], rightImages[START:EN
     frame_right = cv2.imread(imgR)
     rect_right = cv2.remap(frame_right, rect_map_right_x, rect_map_right_y, cv2.INTER_LINEAR)
 
+    #look if there is an object and get its coordinates
     founded, center_x, center_y, radius, disp = getMeasure(rect_left, rect_right, backSub) 
 
     if SAVE and founded and i%10==0:
@@ -155,6 +163,7 @@ for i, (imgL, imgR) in enumerate(zip(leftImages[START:END], rightImages[START:EN
         cv2.imwrite(r".\saved_roi\frame_{}.png".format(i), resized_roi)
 
     if founded:
+        #predict class
         roi = frame[int(center_y-radius):int(center_y+radius), 
                     int(center_x-radius):int(center_x+radius)]
         resized_roi = cv2.resize(roi, (100, 100), interpolation= cv2.INTER_LINEAR)
@@ -164,15 +173,17 @@ for i, (imgL, imgR) in enumerate(zip(leftImages[START:END], rightImages[START:EN
         class_name = {0: "Book", 1: "Cardboard box", 2: "Cup"}[np.argmax(prediction)]
         cv2.putText(frame, "Object type: {}".format(class_name), (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, 2)
 
+        #draw center and bounding box of object
         cv2.circle(frame, (int(center_x), int(center_y)), int(radius), (0, 0, 255), 2) #cirle
         cv2.circle(frame, (int(center_x), int(center_y)), 5, (0, 0, 255), -1) #center
 
+        #convert coordinates to 3d
         center_3d_homogeneous = cv2.triangulatePoints(mtx_P_l, mtx_P_r, np.array([[center_x], [center_y]]), np.array([[center_x-disp], [center_y]]))
         center_3d = cv2.transpose(center_3d_homogeneous)
         center_3d = cv2.convertPointsFromHomogeneous(center_3d).squeeze()
 
         if center_x > 1090 and not initialized:
-            #"""
+            #initialize kalman filter
             kalman = kalmanInit(np.array([[center_3d[0]], 
                                           [0], 
                                           [center_3d[1]], 
@@ -187,6 +198,7 @@ for i, (imgL, imgR) in enumerate(zip(leftImages[START:END], rightImages[START:EN
             initialized = False
 
         if initialized:
+            #update kalman filter
             kalman.correct(np.array([[center_3d[0]],
                                      [center_3d[1]],
                                      [center_3d[2]]], dtype=np.float32))
@@ -198,6 +210,7 @@ for i, (imgL, imgR) in enumerate(zip(leftImages[START:END], rightImages[START:EN
         ### Draw the current tracked state and the predicted state on the image frame ###
         x_pred, y_pred, z_pred = np.matmul(kalman.measurementMatrix, pred).ravel()
 
+        #convert prediction into image coordinates
         point, _ = cv2.projectPoints(np.array([x_pred, y_pred, z_pred]), (0, 0, 0), (0, 0, 0), mtx_P_l[:, 0:-1], None)
 
         point_x = point[0][0][0]
@@ -222,7 +235,7 @@ for i, (imgL, imgR) in enumerate(zip(leftImages[START:END], rightImages[START:EN
 
 cv2.destroyAllWindows()
 
-
+""" #plot of predictions vs measurements
 x_meas = [i[0] for i in measure_history]
 y_meas = [i[1] for i in measure_history]
 z_meas = [i[2] for i in measure_history]
@@ -247,3 +260,4 @@ ax.set_xlabel('X-axis')
 ax.set_ylabel('Y-axis')
 ax.set_zlabel('Z-axis')
 plt.show()
+"""
